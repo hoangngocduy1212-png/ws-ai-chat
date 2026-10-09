@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixi Chat - Demo WebSocket + AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #2b2b3a; --cream: #fff7cf; --cream2: #ffeea0;
+    --blue: #3aa0e8; --red: #e8322b; --yellow: #ffd23f; --pink: #ff9fb0;
+    --mascot: none;
+    /* viền pixel "khuyết góc" */
+    --notch: 0 -4px 0 0 var(--ink), 0 4px 0 0 var(--ink), -4px 0 0 0 var(--ink), 4px 0 0 0 var(--ink);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--cream); color: var(--ink);
+    font-family: "VT323", ui-monospace, Consolas, monospace; font-size: 20px;
+  }
+
+  /* ---------- Thanh tiêu đề ---------- */
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 20px;
+    background: var(--blue); color: #fff; border-bottom: 4px solid var(--ink);
+  }
+  #avatar { width: 48px; height: 51px; image-rendering: pixelated; animation: bob 1s steps(2) infinite; }
+  @keyframes bob { 50% { transform: translateY(-4px); } }
+  header h1 { margin: 0; flex: 1; font-size: 30px; font-weight: 400; letter-spacing: 1px; text-shadow: 2px 2px 0 var(--ink); line-height: 1; }
+  header h1 small { display: block; font-size: 17px; margin-top: 4px; text-shadow: none; opacity: .95; }
+  #status { margin: 4px; padding: 2px 14px; font-size: 20px; color: var(--ink); background: var(--yellow); box-shadow: var(--notch); }
+  #status.open { background: #7be08a; }
+  #status.closed { background: #ff8a80; }
+  #status.connecting { background: var(--yellow); }
+
+  /* ---------- Bố cục ---------- */
+  main { flex: 1; display: flex; min-height: 0; }
+  section { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  section + section { border-left: 4px solid var(--ink); }
+  h2 { margin: 0; padding: 6px 16px; font-size: 22px; font-weight: 400; background: var(--cream2); border-bottom: 4px solid var(--ink); }
+  section + section h2 { background: #2b2b4a; color: #fff; }
+
+  /* ---------- Khung chat: nền caro + linh vật mờ ở góc ---------- */
+  #chat {
+    flex: 1; overflow-y: auto; padding: 22px 26px;
+    background-image: var(--mascot), conic-gradient(#fff3b8 25%, #fff9d6 0 50%, #fff3b8 0 75%, #fff9d6 0);
+    background-size: 200px auto, 32px 32px;
+    background-position: right 14px bottom 14px, 0 0;
+    background-repeat: no-repeat, repeat;
+    image-rendering: pixelated;
+  }
+  .msg {
+    margin: 0 0 20px; padding: 8px 14px; max-width: 80%; width: fit-content;
+    white-space: pre-wrap; line-height: 1.25; font-size: 22px; box-shadow: var(--notch);
+  }
+  .user { background: var(--yellow); margin-left: auto; }
+  .ai { background: #d8f0ff; }
+  .sys { box-shadow: none; background: none; font-size: 18px; opacity: .7; text-align: center; max-width: 100%; width: auto; margin-left: auto; margin-right: auto; }
+
+  /* ---------- Khung log frame kiểu terminal ---------- */
+  #log { flex: 1; overflow: auto; padding: 12px 16px; background: #1b1b2f; font-size: 18px; line-height: 1.3; word-break: break-all; }
+  .out { color: #7cc7ff; } .in { color: #7cffb2; }
+
+  /* ---------- Ô nhập + nút ---------- */
+  form { display: flex; gap: 14px; padding: 14px 20px; background: var(--cream2); border-top: 4px solid var(--ink); }
+  input {
+    flex: 1; margin: 4px; padding: 8px 12px; font: inherit; font-size: 22px; border: 0; outline: none;
+    background: #fff; color: var(--ink); box-shadow: var(--notch);
+  }
+  input:focus { background: #fffbe0; }
+  input::placeholder { color: #2b2b3a80; }
+  button {
+    margin: 4px; padding: 6px 20px; font: inherit; font-size: 22px; border: 0; cursor: pointer;
+    background: var(--yellow); color: var(--ink); box-shadow: var(--notch);
+  }
+  button.stop { background: var(--red); color: #fff; }
+  button:active:not(:disabled) { transform: translateY(4px); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+
+  @media (max-width: 700px) {
+    main { flex-direction: column; }
+    section + section { border-left: 0; border-top: 4px solid var(--ink); }
+    #chat { background-size: 120px auto, 32px 32px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <canvas id="avatar" width="16" height="17"></canvas>
+  <h1>Pixi Chat<small>Demo WebSocket + AI (streaming)</small></h1>
+  <span id="status" class="connecting">Đang kết nối...</span>
+</header>
+
+<main>
+  <section>
+    <h2>Cuộc trò chuyện</h2>
+    <div id="chat"></div>
+    <form id="form">
+      <input id="input" placeholder="Hỏi Pixi điều gì đó..." autocomplete="off" disabled>
+      <button id="send" type="submit" disabled>Gửi</button>
+      <button id="stop" type="button" class="stop" disabled>Dừng</button>
+    </form>
+  </section>
+  <section>
+    <h2>Frame WebSocket (↑ gửi lên, ↓ nhận về)</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+const URL_WS = "ws://localhost:8080";
+const $ = id => document.getElementById(id);
+const chat = $("chat"), logBox = $("log"), input = $("input");
+let ws, aiBubble = null, busy = false;
+
+function setStatus(cls, text) { const s = $("status"); s.className = cls; s.textContent = text; }
+function setBusy(b) {
+  busy = b;
+  $("send").disabled = b || !(ws && ws.readyState === 1);
+  $("stop").disabled = !b;
+}
+function addMsg(cls, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls; d.textContent = text;
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+function logFrame(dir, data) {
+  const d = document.createElement("div");
+  d.className = dir === "↑" ? "out" : "in";
+  d.textContent = dir + " " + data;
+  logBox.appendChild(d); logBox.scrollTop = logBox.scrollHeight;
+}
+
+function connect() {
+  setStatus("connecting", "Đang kết nối...");
+  ws = new WebSocket(URL_WS);                       // bắt đầu handshake HTTP Upgrade
+
+  ws.onopen = () => {
+    setStatus("open", "Đã kết nối");
+    input.disabled = false; setBusy(false);
+  };
+  ws.onmessage = e => {
+    logFrame("↓", e.data);
+    const m = JSON.parse(e.data);
+    if (m.type === "token") {
+      if (!aiBubble) aiBubble = addMsg("ai", "");
+      aiBubble.textContent += m.text;               // nối từng đoạn chữ khi nó về tới
+      chat.scrollTop = chat.scrollHeight;
+    } else if (m.type === "done") {
+      if (m.cancelled && aiBubble) aiBubble.textContent += " [đã dừng]";
+      aiBubble = null; setBusy(false);
+    } else if (m.type === "info") {
+      addMsg("sys", m.text);
+    } else if (m.type === "error") {
+      addMsg("sys", "⚠ " + m.text); aiBubble = null; setBusy(false);
+    }
+  };
+  ws.onclose = () => {
+    setStatus("closed", "Mất kết nối, thử lại sau 2s...");
+    input.disabled = true; setBusy(false); aiBubble = null;
+    setTimeout(connect, 2000);                      // tự kết nối lại
+  };
+  ws.onerror = () => ws.close();
+}
+
+function sendJson(obj) {
+  const s = JSON.stringify(obj);
+  ws.send(s); logFrame("↑", s);
+}
+
+$("form").addEventListener("submit", e => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text || busy || ws.readyState !== 1) return;
+  addMsg("user", text);
+  sendJson({ type: "ask", text });
+  input.value = ""; setBusy(true);
+});
+$("stop").addEventListener("click", () => sendJson({ type: "cancel" }));
+
+connect();
+</script>
+
+<!-- Linh vật pixel "Pixi": chỉ lo phần trang trí, không liên quan tới WebSocket -->
+<script>
+(function () {
+  // Mỗi ký tự là 1 pixel: k=viền, b=xanh, w=trắng, p=hồng, y=vàng, .=trong suốt
+  const ROWS = [
+    "....kkkkkkkk....",
+    "...kbbbbbbbbk...",
+    "..kbbbbbbbbbbk..",
+    "..kbwwwwwwwwbk..",
+    "..kbwkwwwwkwbk..",
+    "..kbwkwwwwkwbk..",
+    "..kbpwwwwwwpbk..",
+    "..kbwwwkkwwwbk..",
+    "...kbwwwwwwbk...",
+    "....kbbbbbbk....",
+    "...kbbbbbbbbk...",
+    "..kbbbwwwwbbbk..",
+    "..kbbbwwwwbbbk..",
+    "...kkkk..kkkk..."
+  ];
+  const PAL = { k: "#2b2b3a", b: "#3aa0e8", w: "#ffffff", p: "#ff9fb0", y: "#ffd23f" };
+
+  function paint(cv, alpha) {
+    const c = cv.getContext("2d");
+    c.globalAlpha = alpha;
+    ROWS.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (PAL[ch]) { c.fillStyle = PAL[ch]; c.fillRect(x, y, 1, 1); }
+    }));
+  }
+
+  // Avatar trên thanh tiêu đề
+  const av = document.getElementById("avatar");
+  av.height = ROWS.length;
+  paint(av, 1);
+
+  // Muốn dùng ảnh khác? Đặt file "mascot.png" cùng thư mục với index.html,
+  // nó sẽ tự thay thế linh vật Pixi làm hình nền khung chat.
+  const img = new Image();
+  img.onload = () => root.style.setProperty("--mascot", 'url("mascot.png")');
+  img.src = "mascot.png";
+})();
+</script>
+</body>
+</html>

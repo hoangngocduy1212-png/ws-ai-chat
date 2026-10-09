@@ -1,0 +1,17 @@
+# Kết quả biên dịch Maven
+target/
+
+# Thư mục do GitHub Copilot tạo ra (không cần cho project)
+.github/modernize/
+
+# File của IDE
+.vscode/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# File hệ thống
+.DS_Store
+Thumbs.db
